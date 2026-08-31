@@ -14,24 +14,48 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract Views ZIP
+      - name: Find and extract Views ZIP
+        shell: bash
         run: |
-          mkdir -p extracted
-          unzip -o views_complete_demo_v2.zip -d extracted
-          
-          if [ -d "extracted/views_complete_demo_v2" ]; then
-            cp -R extracted/views_complete_demo_v2/. .
-          else
-            cp -R extracted/. .
-          fi
-          
-          rm -rf extracted
-          rm -f views_complete_demo_v2.zip
+          set -e
 
-      - name: Commit project files
+          ZIP_FILE=$(find . -maxdepth 3 -type f -iname "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found in repository."
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP_FILE"
+
+          mkdir -p /tmp/views_extract
+          unzip -o "$ZIP_FILE" -d /tmp/views_extract
+
+          PROJECT_DIR=$(find /tmp/views_extract -type f -name "package.json" -printf '%h\n' | head -n 1)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: package.json was not found inside the ZIP."
+            find /tmp/views_extract -maxdepth 3 -type f
+            exit 1
+          fi
+
+          echo "Views project found at: $PROJECT_DIR"
+
+          cp -R "$PROJECT_DIR"/. .
+
+          rm -f "$ZIP_FILE"
+
+      - name: Commit Views project
+        shell: bash
         run: |
           git config user.name "Views Builder"
           git config user.email "actions@github.com"
+
           git add -A
-          git diff --cached --quiet || git commit -m "Extract Views application"
-          git push
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Extract Views application"
+            git push
+          fi
