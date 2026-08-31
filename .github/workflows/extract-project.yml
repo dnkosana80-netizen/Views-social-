@@ -12,41 +12,72 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Find and extract Views ZIP
+      - name: Find Views ZIP
+        id: find_zip
         shell: bash
         run: |
-          set -e
-
-          ZIP_FILE=$(find . -maxdepth 3 -type f -iname "*.zip" | head -n 1)
+          ZIP_FILE=$(find . -type f -iname "*.zip" -print -quit)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found in repository."
+            echo "ERROR: No ZIP file found."
             exit 1
           fi
 
-          echo "Found ZIP: $ZIP_FILE"
+          echo "Found: $ZIP_FILE"
+          echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
 
-          mkdir -p /tmp/views_extract
-          unzip -o "$ZIP_FILE" -d /tmp/views_extract
+      - name: Extract Views
+        env:
+          ZIP_FILE: ${{ steps.find_zip.outputs.zip_file }}
+        run: |
+          python - "$ZIP_FILE" <<'PY'
+          import sys
+          import zipfile
+          from pathlib import Path
 
-          PROJECT_DIR=$(find /tmp/views_extract -type f -name "package.json" -printf '%h\n' | head -n 1)
+          zip_path = Path(sys.argv[1])
+
+          print("Opening:", zip_path)
+
+          if not zipfile.is_zipfile(zip_path):
+              raise SystemExit("ERROR: File is not a valid ZIP archive.")
+
+          with zipfile.ZipFile(zip_path, "r") as z:
+              print("Files in archive:", len(z.namelist()))
+              z.extractall("/tmp/views_project")
+
+          print("Extraction completed successfully.")
+          PY
+
+      - name: Locate package.json
+        id: locate
+        run: |
+          PROJECT_DIR=$(find /tmp/views_project -name package.json -type f -print -quit)
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: package.json was not found inside the ZIP."
-            find /tmp/views_extract -maxdepth 3 -type f
+            echo "ERROR: package.json was not found."
+            find /tmp/views_project -maxdepth 4 -type f | head -100
             exit 1
           fi
 
-          echo "Views project found at: $PROJECT_DIR"
+          PROJECT_DIR=$(dirname "$PROJECT_DIR")
 
+          echo "Project directory: $PROJECT_DIR"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Copy Views project
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+        run: |
           cp -R "$PROJECT_DIR"/. .
 
-          rm -f "$ZIP_FILE"
+      - name: Remove ZIP files
+        run: |
+          find . -type f -iname "*.zip" -delete
 
       - name: Commit Views project
-        shell: bash
         run: |
           git config user.name "Views Builder"
           git config user.email "actions@github.com"
@@ -56,6 +87,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "Extract Views application"
+            git commit -m "Install Views application source"
             git push
           fi
